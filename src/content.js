@@ -10,17 +10,17 @@ const BACKEND_URL = "http://localhost:3001";
 let currentChannelName = null;
 
 // ─── YOUTUBE SPA NAVIGATION LISTENER ─────────────────────────
-let lastUrl = location.href;
-const observer = new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
-    currentChannelName = null;
-    document.getElementById("sol-tip-btn")?.remove();
-    handlePageChange();
-  }
+// YouTube is an SPA. Instead of MutationObserver which fires too early,
+// we listen to YouTube's native navigation event.
+document.addEventListener("yt-navigate-finish", () => {
+  currentChannelName = null;
+  document.getElementById("sol-tip-btn")?.remove();
+  // Small delay to let React components finish mounting after the event
+  setTimeout(handlePageChange, 800);
 });
-observer.observe(document.body, { subtree: true, childList: true });
-handlePageChange();
+
+// Run once on initial full page load
+setTimeout(handlePageChange, 800);
 
 // ─── INJECT WEB3 HELPER INTO MAIN WORLD ──────────────────────
 // Ask the background service worker to inject scripts via
@@ -118,6 +118,7 @@ async function pingWithRetry(maxRetries = 5, delayMs = 800) {
 function extractChannelName() {
   try {
     const el = document.querySelector("#text > a");
+    console.log(el.innerText);
     if (el) return el.innerText.trim();
   } catch (e) {
     console.error("[FlashTip] Failed to extract channel name:", e);
@@ -318,6 +319,18 @@ async function handleSendTip(creator) {
         channelName: creator.channel_name,
       }),
     }).catch(() => { }); // fire-and-forget
+
+    // Play success sound
+    try {
+      // Content scripts cannot use relative paths for local extension files.
+      // We must use chrome.runtime.getURL so YouTube can access the extension asset.
+      const audioUrl = chrome.runtime.getURL("sound/apple_pay.mp3");
+      console.log(audioUrl);
+      const audio = new Audio(audioUrl);
+
+      audio.volume = 0.5;
+      audio.play().catch(e => console.log("[FlashTip] Audio auto-play blocked", e));
+    } catch (e) { }
 
     setStatus(
       statusEl, "success",

@@ -301,9 +301,11 @@
 }
 
 .sol-status--success {
-  color: #14f195;
-  background: rgba(20, 241, 149, 0.08);
-  border: 1px solid rgba(20, 241, 149, 0.2);
+  color: #ffffff;
+  background: #143524;
+  border: 1px solid rgba(20, 241, 149, 0.3);
+  border-left: 4px solid #14f195;
+  box-shadow: 0 4px 12px rgba(20, 241, 149, 0.08);
 }
 
 .sol-status--error {

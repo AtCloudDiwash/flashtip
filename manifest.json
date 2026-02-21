@@ -42,7 +42,8 @@
       "resources": [
         "src/tip-modal.css",
         "src/web3-helper.js",
-        "src/lib/solana-web3.min.js"
+        "src/lib/solana-web3.min.js",
+        "src/sound/*"
       ],
       "matches": [
         "<all_urls>"
