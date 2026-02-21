@@ -42,7 +42,7 @@ export default function SingleVideo({ params }: { params: Promise<{ id: string }
     // Fetch video duration from YouTube API
     const [videoDuration, setVideoDuration] = useState<number | null>(null);
     useEffect(() => {
-        const YT_KEY = "AIzaSyC2InG1ez8F9NupDgb9aGy9DPGkHQ2Sq4A";
+        const YT_KEY = process.env.NEXT_PUBLIC_YT_API_KEY;
         fetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${video.videoId}&key=${YT_KEY}`)
             .then(r => r.json())
             .then(data => {

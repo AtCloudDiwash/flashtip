@@ -6,6 +6,9 @@
 
 const express = require("express");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+require('dotenv').config();
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const {
     Connection,
     PublicKey,
@@ -18,14 +21,13 @@ const {
 
 // ─── CONFIG ──────────────────────────────────────────────────
 
-// Hard coded values for testing
-const PORT = 3001;
-const SUPABASE_URL = "https://srdwuyxxjqnqufrwncvy.supabase.co";
-const SUPABASE_ANON_KEY =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyZHd1eXh4anFucXVmcnduY3Z5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxNTU4NjUsImV4cCI6MjA4MjczMTg2NX0.h408eT-PqQJ3FM_870NwHVjeVCiWgR60HklwTlBDCco";
-const SOLANA_NETWORK = "devnet";
+const PORT = process.env.PORT || 3001;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const SOLANA_NETWORK = process.env.SOLANA_NETWORK || "devnet";
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
-const DASHBOARD_PASSWORD = "flash123";
+const JWT_SECRET = process.env.JWT_SECRET;
+const YT_API_KEY = process.env.YT_API_KEY;
 
 // ─── SOLANA CONNECTION ───────────────────────────────────────
 const connection = new Connection(clusterApiUrl(SOLANA_NETWORK), "confirmed");
@@ -35,9 +37,65 @@ const app = express();
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
+// ─── AUTH MIDDLEWARE ─────────────────────────────────────────
+const authenticateJWT = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+
+    if (authHeader) {
+        const token = authHeader.split(" ")[1];
+
+        jwt.verify(token, JWT_SECRET, (err, user) => {
+            if (err) {
+                return res.sendStatus(403);
+            }
+
+            req.user = user;
+            next();
+        });
+    } else {
+        res.sendStatus(401);
+    }
+};
+
 // ─── HEALTH CHECK ────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", network: SOLANA_NETWORK });
+});
+
+// ─── LOGIN ───────────────────────────────────────────────────
+app.post("/api/auth/login", async (req, res) => {
+    try {
+        const { channelName, password } = req.body;
+
+        // Query the authUsers table in Supabase
+        const url = `${SUPABASE_URL}/rest/v1/authUsers?channel_name=eq.${encodeURIComponent(
+            channelName
+        )}&password=eq.${encodeURIComponent(password)}&select=*&limit=1`;
+
+        const response = await fetch(url, {
+            headers: {
+                apikey: SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            },
+        });
+
+        if (!response.ok) {
+            return res.status(response.status).json({ error: "Auth service error" });
+        }
+
+        const data = await response.json();
+        if (data.length === 0) {
+            return res.status(401).json({ error: "Invalid channel name or password" });
+        }
+
+        const user = data[0];
+        const token = jwt.sign({ channelName: user.channel_name }, JWT_SECRET, { expiresIn: '24h' });
+
+        res.json({ success: true, token, channelName: user.channel_name });
+    } catch (err) {
+        console.error("[FlashTip] Login failed:", err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ─── GET CREATOR ─────────────────────────────────────────────
@@ -196,12 +254,11 @@ app.post("/api/record-tip", async (req, res) => {
 
 // ─── DASHBOARD ANALYTICS (AUTHENTICATED) ─────────────────────
 // Fetches tipped video data from Supabase and augments it with YouTube Analytics for the frontend dashboard
-app.post("/api/dashboard/data", async (req, res) => {
+app.post("/api/dashboard/data", authenticateJWT, async (req, res) => {
     try {
-        const { channelName, password } = req.body;
-
-        if (password !== DASHBOARD_PASSWORD) {
-            return res.status(401).json({ error: "Invalid password" });
+        const channelName = req.user.channelName;
+        if (!channelName) {
+            return res.status(401).json({ error: "Missing channel name in token" });
         }
 
         // 1. Fetch all tips for the channel from Supabase
@@ -265,7 +322,6 @@ app.post("/api/dashboard/data", async (req, res) => {
         });
 
         // 3. Fetch YouTube Stats for these videos
-        const YT_API_KEY = "AIzaSyC2InG1ez8F9NupDgb9aGy9DPGkHQ2Sq4A";
         const videoIds = Object.keys(videoMap);
 
         let totalViews = 0;
@@ -342,6 +398,53 @@ app.post("/api/dashboard/data", async (req, res) => {
     }
 });
 
+// ─── AI ANALYST ──────────────────────────────────────────────
+// A chat endpoint that passes user's analytics context to Gemini for insights.
+app.post("/api/ai/chat", authenticateJWT, async (req, res) => {
+    try {
+        const { message, context } = req.body;
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+        const prompt = `You are "FlashTip AI", a world-class data scientist and creator strategist. 
+            Your goal is to help creators maximize their SOL earnings and understand their audience behavior using Solana tipping data.
+
+            DATA CONTEXT FOR THE CURRENT CREATOR:
+            ---
+            OVERVIEW STATS:
+            - Total SOL Earned: ${context?.overview?.totalSolEarned?.toFixed(4)} SOL
+            - Total Tips: ${context?.overview?.totalTipsReceived}
+            - Highest Single Tip: ${context?.overview?.highestTipReceived} SOL
+            - Avg Tip Amount: ${context?.overview?.averageTipAmount?.toFixed(4)} SOL
+            - Total Watch Time from Tippers: ${context?.overview?.totalTimeSpentSeconds} seconds
+
+            VIDEO PERFORMANCE (Top 5):
+            ${context?.videoBreakdown?.slice(0, 5).map(v => `- "${v.title}": ${v.totalSolEarned.toFixed(2)} SOL from ${v.tipsCount} tips.`).join('\n')}
+
+            AUDIENCE SENTIMENT (Word Cloud):
+            ${context?.wordCloud?.map(w => w.word).join(', ')}
+            ---
+
+            INSTRUCTIONS:
+            1. Use the data above to provide specific, data-driven answers.
+            2. Be encouraging but professional.
+            3. If the user asks for advice, suggest strategies based on their best-performing videos or tipper comments.
+            4. Keep responses concise but insightful (max 3-4 paragraphs).
+            5. Use formatting like bolding or bullet points for readability.
+
+            USER QUESTION:
+            "${message}"`;
+
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text();
+
+        res.json({ success: true, reply: responseText });
+    } catch (err) {
+        console.error("[FlashTip] AI error:", err.message);
+        res.status(500).json({ error: "AI failed to respond: " + err.message });
+    }
+});
+
 // ─── DASHBOARD ANALYTICS ─────────────────────────────────────
 // Fetches tipped video data from Supabase and augments it with YouTube Analytics
 app.get("/dashboard/analytics/:channelName", async (req, res) => {
@@ -412,7 +515,6 @@ app.get("/dashboard/analytics/:channelName", async (req, res) => {
         });
 
         // 3. Fetch YouTube Stats for these videos
-        const YT_API_KEY = "AIzaSyC2InG1ez8F9NupDgb9aGy9DPGkHQ2Sq4A";
         const videoIds = Object.keys(videoMap);
 
         let totalViews = 0;
@@ -491,13 +593,8 @@ app.get("/dashboard/analytics/:channelName", async (req, res) => {
 
 // ─── CREATE INDEXES ──────────────────────────────────────────
 // Creates performance indexes on the tips table in Supabase.
-app.post("/api/dashboard/create-indexes", async (req, res) => {
+app.post("/api/dashboard/create-indexes", authenticateJWT, async (req, res) => {
     try {
-        const { password } = req.body;
-        if (password !== DASHBOARD_PASSWORD) {
-            return res.status(401).json({ error: "Invalid password" });
-        }
-
         const indexStatements = [
             "CREATE INDEX IF NOT EXISTS idx_tips_creator_address ON public.tips (creator_address);",
             "CREATE INDEX IF NOT EXISTS idx_tips_tipper_address ON public.tips (tipper_address);",

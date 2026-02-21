@@ -44,7 +44,7 @@ export default function Home() {
     const videoIds = videoBreakdown.map(v => v.videoId).filter(Boolean);
     if (videoIds.length === 0) { setAvgWatchTime("0:00"); return; }
 
-    const YT_KEY = "AIzaSyC2InG1ez8F9NupDgb9aGy9DPGkHQ2Sq4A";
+    const YT_KEY = process.env.NEXT_PUBLIC_YT_API_KEY;
     fetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds.join(",")}&key=${YT_KEY}`)
       .then(r => r.json())
       .then(data => {

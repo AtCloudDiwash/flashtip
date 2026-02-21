@@ -75,20 +75,34 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
     const [loading, setLoading] = useState(false);
     const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
 
-    const handleLogin = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setLoading(true);
-        setError("");
+    // Load token from localStorage on mount
+    useEffect(() => {
+        const token = localStorage.getItem("flash_tip_token");
+        const storedChannel = localStorage.getItem("flash_tip_channel");
+        if (token && storedChannel) {
+            setChannelName(storedChannel);
+            fetchDashboardData(token);
+        }
+    }, []);
 
+    const fetchDashboardData = async (token: string) => {
+        setLoading(true);
         try {
-            const res = await fetch("http://localhost:3001/api/dashboard/data", {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/dashboard/data`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ channelName, password }),
+                headers: { 
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({}), // channelName is inferred from JWT on backend
             });
 
             if (!res.ok) {
-                throw new Error("Invalid credentials");
+                if (res.status === 401 || res.status === 403) {
+                    logout();
+                    throw new Error("Session expired. Please login again.");
+                }
+                throw new Error("Failed to fetch dashboard data");
             }
 
             const { data } = await res.json();
@@ -99,6 +113,38 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
             setAnalyticsData(data);
             setIsLoggedIn(true);
         } catch (err: any) {
+            setError(err.message || "Failed to fetch data");
+            setIsLoggedIn(false);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoading(true);
+        setError("");
+
+        try {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/auth/login`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ channelName, password }),
+            });
+
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.error || "Invalid credentials");
+            }
+
+            const { token, channelName: verifiedChannel } = await res.json();
+            
+            localStorage.setItem("flash_tip_token", token);
+            localStorage.setItem("flash_tip_channel", verifiedChannel);
+            setChannelName(verifiedChannel);
+            
+            await fetchDashboardData(token);
+        } catch (err: any) {
             setError(err.message || "Failed to login");
         } finally {
             setLoading(false);
@@ -106,6 +152,8 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
     };
 
     const logout = () => {
+        localStorage.removeItem("flash_tip_token");
+        localStorage.removeItem("flash_tip_channel");
         setIsLoggedIn(false);
         setChannelName("");
         setPassword("");
