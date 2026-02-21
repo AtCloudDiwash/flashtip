@@ -146,7 +146,16 @@ app.post("/api/build-transaction", async (req, res) => {
 // Records a successful tip in Supabase for the creator dashboard.
 app.post("/api/record-tip", async (req, res) => {
     try {
-        const { signature, fromAddress, toAddress, solAmount, memo, channelName } = req.body;
+        const {
+            signature,
+            tipper_address,
+            creator_address,
+            solAmount,
+            memo,
+            channel_name,
+            video_link,
+            duration_spent
+        } = req.body;
 
         const response = await fetch(`${SUPABASE_URL}/rest/v1/tips`, {
             method: "POST",
@@ -158,11 +167,13 @@ app.post("/api/record-tip", async (req, res) => {
             },
             body: JSON.stringify({
                 signature,
-                from_address: fromAddress,
-                to_address: toAddress,
+                tipper_address,
+                creator_address,
                 sol_amount: solAmount,
+                video_link,
+                duration_spent,
                 memo: memo || null,
-                channel_name: channelName,
+                channel_name,
                 network: SOLANA_NETWORK,
             }),
         });
@@ -179,6 +190,133 @@ app.post("/api/record-tip", async (req, res) => {
         console.error("[FlashTip] Record tip failed:", err.message);
         // Don't fail the user — tip already went through on-chain
         res.json({ recorded: false, reason: err.message });
+    }
+});
+
+// ─── DASHBOARD ANALYTICS ─────────────────────────────────────
+// Fetches tipped video data from Supabase and augments it with YouTube Analytics
+app.get("/dashboard/analytics/:channelName", async (req, res) => {
+    try {
+        const channelName = req.params.channelName;
+        // 1. Fetch all tips for the channel from Supabase
+        const tipsUrl = `${SUPABASE_URL}/rest/v1/tips?channel_name=eq.${encodeURIComponent(channelName)}&select=*`;
+        const supabaseRes = await fetch(tipsUrl, {
+            headers: {
+                apikey: SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${SUPABASE_ANON_KEY}`
+            }
+        });
+
+        if (!supabaseRes.ok) {
+            return res.status(supabaseRes.status).json({ error: "Failed to fetch tips from Supabase" });
+        }
+
+        const tips = await supabaseRes.json();
+
+        if (!tips || tips.length === 0) {
+            return res.json({ message: "No data found for this creator.", data: null });
+        }
+
+        // 2. Extract unique video IDs from video_links
+        const extractVideoId = (url) => {
+            if (!url) return null;
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        };
+
+        const videoMap = {};
+        let totalSol = 0;
+        let totalTimeSpent = 0;
+        let highestTip = 0;
+
+        tips.forEach(tip => {
+            totalSol += Number(tip.sol_amount) || 0;
+            totalTimeSpent += Number(tip.duration_spent) || 0;
+            const currentTipAmount = Number(tip.sol_amount) || 0;
+            if (currentTipAmount > highestTip) highestTip = currentTipAmount;
+
+            const vId = extractVideoId(tip.video_link);
+            if (vId) {
+                if (!videoMap[vId]) {
+                    videoMap[vId] = {
+                        videoId: vId,
+                        videoLink: tip.video_link,
+                        tipsCount: 0,
+                        totalSolEarned: 0,
+                        totalTimeSpent: 0,
+                        topTip: 0,
+                        memos: []
+                    };
+                }
+                videoMap[vId].tipsCount++;
+                videoMap[vId].totalSolEarned += currentTipAmount;
+                videoMap[vId].totalTimeSpent += Number(tip.duration_spent) || 0;
+
+                if (currentTipAmount > videoMap[vId].topTip) {
+                    videoMap[vId].topTip = currentTipAmount;
+                }
+                if (tip.memo) {
+                    videoMap[vId].memos.push({ amount: currentTipAmount, memo: tip.memo, tipper: tip.tipper_address, date: tip.created_at });
+                }
+            }
+        });
+
+        // 3. Fetch YouTube Stats for these videos
+        const YT_API_KEY = "AIzaSyC2InG1ez8F9NupDgb9aGy9DPGkHQ2Sq4A";
+        const videoIds = Object.keys(videoMap);
+
+        let totalViews = 0;
+        let totalLikes = 0;
+
+        // Note: YouTube API allows a max of 50 ids per request.
+        const chunkArray = (arr, size) => Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size));
+        const batches = chunkArray(videoIds, 50);
+
+        for (const batch of batches) {
+            const ytUrl = `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${batch.join(',')}&key=${YT_API_KEY}`;
+            const ytRes = await fetch(ytUrl);
+            if (ytRes.ok) {
+                const ytData = await ytRes.json();
+                if (ytData.items) {
+                    ytData.items.forEach(item => {
+                        const vId = item.id;
+                        const stats = item.statistics || {};
+                        const snippet = item.snippet || {};
+
+                        // Merge YT data into our videoMap
+                        videoMap[vId].title = snippet.title;
+                        videoMap[vId].channelTitle = snippet.channelTitle;
+                        videoMap[vId].views = parseInt(stats.viewCount || "0", 10);
+                        videoMap[vId].likes = parseInt(stats.likeCount || "0", 10);
+                        videoMap[vId].comments = parseInt(stats.commentCount || "0", 10);
+
+                        totalViews += videoMap[vId].views;
+                        totalLikes += videoMap[vId].likes;
+                    });
+                }
+            }
+        }
+
+        // 4. Format the final output
+        const analyticalData = {
+            overview: {
+                channelName: channelName,
+                totalTipsReceived: tips.length,
+                totalSolEarned: totalSol,
+                totalTimeSpentSeconds: totalTimeSpent,
+                highestTipReceived: highestTip,
+                totalViewsOnTippedVideos: totalViews,
+                totalLikesOnTippedVideos: totalLikes,
+                averageTipAmount: tips.length > 0 ? (totalSol / tips.length) : 0
+            },
+            videoBreakdown: Object.values(videoMap).sort((a, b) => b.totalSolEarned - a.totalSolEarned)
+        };
+
+        res.json({ success: true, data: analyticalData });
+    } catch (err) {
+        console.error("[FlashTip] Dashboard analytics failed:", err.message);
+        res.status(500).json({ error: err.message });
     }
 });
 

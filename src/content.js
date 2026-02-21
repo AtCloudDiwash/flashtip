@@ -8,12 +8,14 @@ const BACKEND_URL = "http://localhost:3001";
 
 // ─── STATE ───────────────────────────────────────────────────
 let currentChannelName = null;
+let videoStartTime = Date.now();
 
 // ─── YOUTUBE SPA NAVIGATION LISTENER ─────────────────────────
 // YouTube is an SPA. Instead of MutationObserver which fires too early,
 // we listen to YouTube's native navigation event.
 document.addEventListener("yt-navigate-finish", () => {
   currentChannelName = null;
+  videoStartTime = Date.now();
   document.getElementById("sol-tip-btn")?.remove();
   // Small delay to let React components finish mounting after the event
   setTimeout(handlePageChange, 800);
@@ -307,16 +309,20 @@ async function handleSendTip(creator) {
     });
 
     // Step 5: Record tip in backend (non-blocking)
+    const duration_spent = Math.floor((Date.now() - videoStartTime) / 1000);
+
     fetch(`${BACKEND_URL}/api/record-tip`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         signature: result.signature,
-        fromAddress,
-        toAddress: creator.wallet_address,
         solAmount: amount,
         memo,
-        channelName: creator.channel_name,
+        tipper_address: fromAddress,
+        creator_address: creator.wallet_address,
+        video_link: window.location.href,
+        duration_spent,
+        channel_name: creator.channel_name,
       }),
     }).catch(() => { }); // fire-and-forget
 
