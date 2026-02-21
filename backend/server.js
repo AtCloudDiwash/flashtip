@@ -25,6 +25,7 @@ const SUPABASE_ANON_KEY =
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyZHd1eXh4anFucXVmcnduY3Z5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxNTU4NjUsImV4cCI6MjA4MjczMTg2NX0.h408eT-PqQJ3FM_870NwHVjeVCiWgR60HklwTlBDCco";
 const SOLANA_NETWORK = "devnet";
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+const DASHBOARD_PASSWORD = "flash123";
 
 // ─── SOLANA CONNECTION ───────────────────────────────────────
 const connection = new Connection(clusterApiUrl(SOLANA_NETWORK), "confirmed");
@@ -193,6 +194,154 @@ app.post("/api/record-tip", async (req, res) => {
     }
 });
 
+// ─── DASHBOARD ANALYTICS (AUTHENTICATED) ─────────────────────
+// Fetches tipped video data from Supabase and augments it with YouTube Analytics for the frontend dashboard
+app.post("/api/dashboard/data", async (req, res) => {
+    try {
+        const { channelName, password } = req.body;
+
+        if (password !== DASHBOARD_PASSWORD) {
+            return res.status(401).json({ error: "Invalid password" });
+        }
+
+        // 1. Fetch all tips for the channel from Supabase
+        const tipsUrl = `${SUPABASE_URL}/rest/v1/tips?channel_name=eq.${encodeURIComponent(channelName)}&select=*`;
+        const supabaseRes = await fetch(tipsUrl, {
+            headers: {
+                apikey: SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${SUPABASE_ANON_KEY}`
+            }
+        });
+
+        if (!supabaseRes.ok) {
+            return res.status(supabaseRes.status).json({ error: "Failed to fetch tips from Supabase" });
+        }
+
+        const tips = await supabaseRes.json();
+
+        // 2. Extract unique video IDs from video_links
+        const extractVideoId = (url) => {
+            if (!url) return null;
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        };
+
+        const videoMap = {};
+        let totalSol = 0;
+        let totalTimeSpent = 0;
+        let highestTip = 0;
+
+        tips.forEach(tip => {
+            totalSol += Number(tip.sol_amount) || 0;
+            totalTimeSpent += Number(tip.duration_spent) || 0;
+            const currentTipAmount = Number(tip.sol_amount) || 0;
+            if (currentTipAmount > highestTip) highestTip = currentTipAmount;
+
+            const vId = extractVideoId(tip.video_link);
+            if (vId) {
+                if (!videoMap[vId]) {
+                    videoMap[vId] = {
+                        videoId: vId,
+                        videoLink: tip.video_link,
+                        tipsCount: 0,
+                        totalSolEarned: 0,
+                        totalTimeSpent: 0,
+                        topTip: 0,
+                        memos: []
+                    };
+                }
+                videoMap[vId].tipsCount++;
+                videoMap[vId].totalSolEarned += currentTipAmount;
+                videoMap[vId].totalTimeSpent += Number(tip.duration_spent) || 0;
+
+                if (currentTipAmount > videoMap[vId].topTip) {
+                    videoMap[vId].topTip = currentTipAmount;
+                }
+                if (tip.memo) {
+                    videoMap[vId].memos.push({ amount: currentTipAmount, memo: tip.memo, tipper: tip.tipper_address, date: tip.created_at });
+                }
+            }
+        });
+
+        // 3. Fetch YouTube Stats for these videos
+        const YT_API_KEY = "AIzaSyC2InG1ez8F9NupDgb9aGy9DPGkHQ2Sq4A";
+        const videoIds = Object.keys(videoMap);
+
+        let totalViews = 0;
+        let totalLikes = 0;
+
+        const chunkArray = (arr, size) => Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size));
+        const batches = chunkArray(videoIds, 50);
+
+        for (const batch of batches) {
+            const ytUrl = `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${batch.join(',')}&key=${YT_API_KEY}`;
+            const ytRes = await fetch(ytUrl);
+            if (ytRes.ok) {
+                const ytData = await ytRes.json();
+                if (ytData.items) {
+                    ytData.items.forEach(item => {
+                        const vId = item.id;
+                        const stats = item.statistics || {};
+                        const snippet = item.snippet || {};
+
+                        // Merge YT data into our videoMap
+                        videoMap[vId].title = snippet.title;
+                        videoMap[vId].channelTitle = snippet.channelTitle;
+                        videoMap[vId].thumbnailUrl = snippet.thumbnails?.high?.url || snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || null;
+                        videoMap[vId].publishedAt = snippet.publishedAt || null;
+                        videoMap[vId].views = parseInt(stats.viewCount || "0", 10);
+                        videoMap[vId].likes = parseInt(stats.likeCount || "0", 10);
+                        videoMap[vId].comments = parseInt(stats.commentCount || "0", 10);
+
+                        totalViews += videoMap[vId].views;
+                        totalLikes += videoMap[vId].likes;
+                    });
+                }
+            }
+        }
+
+        // 4. Build word cloud from memos
+        const wordFrequency = {};
+        tips.forEach(tip => {
+            if (tip.memo && tip.memo.trim()) {
+                tip.memo.split(/\s+/).forEach(rawWord => {
+                    const word = rawWord.toLowerCase().replace(/[^a-z']/g, '');
+                    if (word.length > 2) {
+                        wordFrequency[word] = (wordFrequency[word] || 0) + 1;
+                    }
+                });
+            }
+        });
+        const wordCloud = Object.entries(wordFrequency)
+            .map(([word, count]) => ({ word, count }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 20);
+
+        // 5. Format the final output
+        const analyticalData = {
+            overview: {
+                channelName: channelName,
+                totalTipsReceived: tips.length,
+                totalSolEarned: totalSol,
+                totalTimeSpentSeconds: totalTimeSpent,
+                highestTipReceived: highestTip,
+                totalViewsOnTippedVideos: totalViews,
+                totalLikesOnTippedVideos: totalLikes,
+                averageTipAmount: tips.length > 0 ? (totalSol / tips.length) : 0
+            },
+            videoBreakdown: Object.values(videoMap).sort((a, b) => b.totalSolEarned - a.totalSolEarned),
+            wordCloud: wordCloud,
+            rawTips: tips
+        };
+
+        res.json({ success: true, data: analyticalData });
+    } catch (err) {
+        console.error("[FlashTip] Dashboard data fetch failed:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ─── DASHBOARD ANALYTICS ─────────────────────────────────────
 // Fetches tipped video data from Supabase and augments it with YouTube Analytics
 app.get("/dashboard/analytics/:channelName", async (req, res) => {
@@ -287,6 +436,8 @@ app.get("/dashboard/analytics/:channelName", async (req, res) => {
                         // Merge YT data into our videoMap
                         videoMap[vId].title = snippet.title;
                         videoMap[vId].channelTitle = snippet.channelTitle;
+                        videoMap[vId].thumbnailUrl = snippet.thumbnails?.high?.url || snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || null;
+                        videoMap[vId].publishedAt = snippet.publishedAt || null;
                         videoMap[vId].views = parseInt(stats.viewCount || "0", 10);
                         videoMap[vId].likes = parseInt(stats.likeCount || "0", 10);
                         videoMap[vId].comments = parseInt(stats.commentCount || "0", 10);
@@ -298,7 +449,24 @@ app.get("/dashboard/analytics/:channelName", async (req, res) => {
             }
         }
 
-        // 4. Format the final output
+        // 4. Build word cloud from memos
+        const wordFrequency = {};
+        tips.forEach(tip => {
+            if (tip.memo && tip.memo.trim()) {
+                tip.memo.split(/\s+/).forEach(rawWord => {
+                    const word = rawWord.toLowerCase().replace(/[^a-z']/g, '');
+                    if (word.length > 2) {
+                        wordFrequency[word] = (wordFrequency[word] || 0) + 1;
+                    }
+                });
+            }
+        });
+        const wordCloud = Object.entries(wordFrequency)
+            .map(([word, count]) => ({ word, count }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 20);
+
+        // 5. Format the final output
         const analyticalData = {
             overview: {
                 channelName: channelName,
@@ -310,12 +478,50 @@ app.get("/dashboard/analytics/:channelName", async (req, res) => {
                 totalLikesOnTippedVideos: totalLikes,
                 averageTipAmount: tips.length > 0 ? (totalSol / tips.length) : 0
             },
-            videoBreakdown: Object.values(videoMap).sort((a, b) => b.totalSolEarned - a.totalSolEarned)
+            videoBreakdown: Object.values(videoMap).sort((a, b) => b.totalSolEarned - a.totalSolEarned),
+            wordCloud: wordCloud
         };
 
         res.json({ success: true, data: analyticalData });
     } catch (err) {
         console.error("[FlashTip] Dashboard analytics failed:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── CREATE INDEXES ──────────────────────────────────────────
+// Creates performance indexes on the tips table in Supabase.
+app.post("/api/dashboard/create-indexes", async (req, res) => {
+    try {
+        const { password } = req.body;
+        if (password !== DASHBOARD_PASSWORD) {
+            return res.status(401).json({ error: "Invalid password" });
+        }
+
+        const indexStatements = [
+            "CREATE INDEX IF NOT EXISTS idx_tips_creator_address ON public.tips (creator_address);",
+            "CREATE INDEX IF NOT EXISTS idx_tips_tipper_address ON public.tips (tipper_address);",
+            "CREATE INDEX IF NOT EXISTS idx_tips_created_at ON public.tips (created_at DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_tips_video_link ON public.tips (video_link);"
+        ];
+
+        const results = [];
+        for (const sql of indexStatements) {
+            const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/exec_sql`, {
+                method: "POST",
+                headers: {
+                    apikey: SUPABASE_ANON_KEY,
+                    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ query: sql })
+            });
+            results.push({ sql, ok: rpcRes.ok, status: rpcRes.status });
+        }
+
+        res.json({ success: true, results });
+    } catch (err) {
+        console.error("[FlashTip] Create indexes failed:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -328,5 +534,7 @@ app.listen(PORT, () => {
     console.log(`     GET  /api/health`);
     console.log(`     GET  /api/creator/:channelName`);
     console.log(`     POST /api/build-transaction`);
-    console.log(`     POST /api/record-tip\n`);
+    console.log(`     POST /api/record-tip`);
+    console.log(`     POST /api/dashboard/data`);
+    console.log(`     POST /api/dashboard/create-indexes\n`);
 });
