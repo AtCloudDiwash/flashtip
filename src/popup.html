@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tip with SOL</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 280px;
+      background: #0f0f0f;
+      color: #fff;
+      font-family: -apple-system, Roboto, sans-serif;
+      padding: 20px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #9945ff, #14f195);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    h1 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    p {
+      font-size: 12px;
+      color: #888;
+      line-height: 1.5;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      margin: 14px 0;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 10px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #14f195;
+      flex-shrink: 0;
+    }
+
+    .link {
+      display: block;
+      text-align: center;
+      color: #9945ff;
+      font-size: 12px;
+      text-decoration: none;
+      margin-top: 14px;
+    }
+    .link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">◎</div>
+    <h1>Tip with SOL</h1>
+  </div>
+
+  <p>Tip your favorite YouTube creators with Solana directly from their video page.</p>
+
+  <hr class="divider" />
+
+  <div class="status-row">
+    <div class="dot"></div>
+    <span>Active on YouTube</span>
+  </div>
+
+  <div class="status-row" style="color: #ffc800;">
+    <div class="dot" style="background: #ffc800;"></div>
+    <span>Running on Solana Devnet</span>
+  </div>
+
+  <p style="margin-top: 12px;">Open any YouTube video. If the creator is enrolled, a <strong style="color:#fff">💸 Tip with SOL</strong> button will appear next to Subscribe.</p>
+
+  <a class="link" href="https://yoursite.com/enroll" target="_blank">
+    Are you a creator? Enroll here →
+  </a>
+</body>
+</html>
