@@ -154,7 +154,7 @@ async function injectOrUpdateTipButton(channelName) {
   if (creator) {
     btn.disabled = false;
     btn.title = `Tip ${creator.channel_name} with SOL`;
-    btn.querySelector(".tip-btn-text").textContent = "💸 Tip with SOL";
+    btn.querySelector(".tip-btn-text").textContent = "Tip with SOL";
     btn.onclick = () => openTipModal(creator);
   } else {
     btn.disabled = true;
@@ -337,6 +337,7 @@ async function handleSendTip(creator) {
       `✅ Tip sent! <a href="https://explorer.solana.com/tx/${result.signature}?cluster=devnet" target="_blank">View on Explorer ↗</a>`
     );
     sendLabel.textContent = "Tip Sent! ◎";
+
 
   } catch (err) {
     const msg = err.message?.includes("rejected") || err.message?.includes("User rejected")
