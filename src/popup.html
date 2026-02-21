@@ -23,19 +23,24 @@
     }
 
     .logo {
-      width: 36px;
-      height: 36px;
+      width: 42px;
+      height: 42px;
       border-radius: 50%;
       background: linear-gradient(135deg, #9945ff, #14f195);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
       flex-shrink: 0;
+      box-shadow: 0 4px 12px rgba(153, 69, 255, 0.2);
+    }
+
+    .logo svg {
+      width: 20px;
+      height: 20px;
     }
 
     h1 {
-      font-size: 16px;
+      font-size: 18px;
       font-weight: 700;
       color: #fff;
     }
@@ -82,7 +87,9 @@
 </head>
 <body>
   <div class="header">
-    <div class="logo">◎</div>
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="white"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+    </div>
     <h1>Tip with SOL</h1>
   </div>
 
@@ -102,7 +109,7 @@
 
   <p style="margin-top: 12px;">Open any YouTube video. If the creator is enrolled, a <strong style="color:#fff">💸 Tip with SOL</strong> button will appear next to Subscribe.</p>
 
-  <a class="link" href="https://yoursite.com/enroll" target="_blank">
+  <a class="link" href="http://localhost:3000/" target="_blank">
     Are you a creator? Enroll here →
   </a>
 </body>

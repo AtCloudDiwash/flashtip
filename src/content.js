@@ -137,6 +137,8 @@ async function fetchCreator(channelName) {
 }
 
 // ─── BUTTON INJECTION ─────────────────────────────────────────
+const LIGHTNING_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="display:block"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>`;
+
 async function injectOrUpdateTipButton(channelName) {
   document.getElementById("sol-tip-btn")?.remove();
 
@@ -161,16 +163,16 @@ async function injectOrUpdateTipButton(channelName) {
   } else {
     btn.disabled = true;
     btn.title = "This creator hasn't enrolled in FlashTip yet";
-    btn.querySelector(".tip-btn-text").textContent = "💸 Tip with SOL";
+    btn.querySelector(".tip-btn-text").textContent = "Tip with SOL";
   }
 }
 
-function createTipButton(enabled = false, label = "💸 Tip with SOL") {
+function createTipButton(enabled = false, label = "Tip with SOL") {
   const btn = document.createElement("button");
   btn.id = "sol-tip-btn";
   btn.className = "sol-tip-button";
   btn.disabled = !enabled;
-  btn.innerHTML = `<span class="tip-btn-icon">◎</span><span class="tip-btn-text">${label}</span>`;
+  btn.innerHTML = `<span class="tip-btn-icon">${LIGHTNING_SVG}</span><span class="tip-btn-text">${label}</span>`;
   return btn;
 }
 
@@ -183,7 +185,7 @@ function openTipModal(creator) {
   overlay.innerHTML = `
     <div class="sol-modal">
       <div class="sol-modal-header">
-        <div class="sol-modal-logo">◎</div>
+        <div class="sol-modal-logo">${LIGHTNING_SVG}</div>
         <h2 class="sol-modal-title">Tip with SOL</h2>
         <button class="sol-modal-close" id="sol-modal-close">✕</button>
       </div>
@@ -342,7 +344,7 @@ async function handleSendTip(creator) {
       statusEl, "success",
       `✅ Tip sent! <a href="https://explorer.solana.com/tx/${result.signature}?cluster=devnet" target="_blank">View on Explorer ↗</a>`
     );
-    sendLabel.textContent = "Tip Sent! ◎";
+    sendLabel.textContent = "Tip Sent! ⚡";
 
 
   } catch (err) {
