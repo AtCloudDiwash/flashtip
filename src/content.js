@@ -1,33 +1,10 @@
 // ============================================================
-// TIP WITH SOL — Content Script (ISOLATED world)
-// Talks to web3-helper.js (MAIN world) via postMessage
-// for all Phantom/Solana interactions.
+// FLASHTIP — Content Script (ISOLATED world)
+// Handles YouTube UI (button + modal). All Solana/Supabase
+// logic is on the backend. Phantom signing is in web3-helper.js.
 // ============================================================
 
-const SUPABASE_URL = "https://srdwuyxxjqnqufrwncvy.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyZHd1eXh4anFucXVmcnduY3Z5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxNTU4NjUsImV4cCI6MjA4MjczMTg2NX0.h408eT-PqQJ3FM_870NwHVjeVCiWgR60HklwTlBDCco";
-const SOLANA_NETWORK = "devnet";
-
-// ─── INJECT WEB3 HELPER INTO MAIN WORLD ──────────────────────
-// Ask the background service worker to inject scripts via
-// chrome.scripting.executeScript (bypasses YouTube CSP).
-let web3HelperInjected = false;
-function injectWeb3Helper() {
-  if (web3HelperInjected) return;
-  chrome.runtime.sendMessage({ type: "INJECT_WEB3_HELPER" }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error("[TipSOL] Injection request failed:", chrome.runtime.lastError.message);
-      return;
-    }
-    if (response?.ok) {
-      web3HelperInjected = true;
-      console.log("[TipSOL] web3-helper.js injected into MAIN world via background.");
-    } else {
-      console.error("[TipSOL] Injection failed:", response?.error);
-    }
-  });
-}
-injectWeb3Helper();
+const BACKEND_URL = "http://localhost:3001";
 
 // ─── STATE ───────────────────────────────────────────────────
 let currentChannelName = null;
@@ -44,6 +21,25 @@ const observer = new MutationObserver(() => {
 });
 observer.observe(document.body, { subtree: true, childList: true });
 handlePageChange();
+
+// ─── INJECT WEB3 HELPER INTO MAIN WORLD ──────────────────────
+// Ask the background service worker to inject scripts via
+// chrome.scripting.executeScript (bypasses YouTube CSP).
+let web3HelperInjected = false;
+function injectWeb3Helper() {
+  if (web3HelperInjected) return;
+  chrome.runtime.sendMessage({ type: "INJECT_WEB3_HELPER" }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error("[FlashTip] Injection request failed:", chrome.runtime.lastError.message);
+      return;
+    }
+    if (response?.ok) {
+      web3HelperInjected = true;
+      console.log("[FlashTip] web3-helper.js injected into MAIN world.");
+    }
+  });
+}
+injectWeb3Helper();
 
 // ─── PAGE CHANGE HANDLER ──────────────────────────────────────
 async function handlePageChange() {
@@ -96,27 +92,26 @@ function sendToMainWorld(payload) {
     window.addEventListener("message", handler);
     window.postMessage({ ...payload, id }, "*");
 
-    // Timeout after 30s
     setTimeout(() => {
       window.removeEventListener("message", handler);
-      reject(new Error("Timeout waiting for web3 helper response"));
+      reject(new Error("Timeout waiting for web3 helper"));
     }, 30000);
   });
 }
 
-// ─── PING WITH RETRIES (waits for web3-helper to be ready) ───
+// ─── PING WITH RETRIES ───────────────────────────────────────
 async function pingWithRetry(maxRetries = 5, delayMs = 800) {
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await sendToMainWorld({ type: "SOL_TIP_PING" });
     } catch (_) {
       if (i < maxRetries - 1) {
-        console.log(`[TipSOL] Ping attempt ${i + 1} failed, retrying in ${delayMs}ms...`);
+        console.log(`[FlashTip] Ping attempt ${i + 1} failed, retrying...`);
         await delay(delayMs);
       }
     }
   }
-  throw new Error("Phantom wallet not detected. Make sure Phantom is installed and refresh the page.");
+  throw new Error("Phantom wallet not detected. Install Phantom and refresh.");
 }
 
 // ─── EXTRACT CHANNEL NAME ─────────────────────────────────────
@@ -125,23 +120,17 @@ function extractChannelName() {
     const el = document.querySelector("#text > a");
     if (el) return el.innerText.trim();
   } catch (e) {
-    console.error("[TipSOL] Failed to extract channel name:", e);
+    console.error("[FlashTip] Failed to extract channel name:", e);
   }
   return null;
 }
 
-// ─── SUPABASE LOOKUP ─────────────────────────────────────────
+// ─── CREATOR LOOKUP (via backend) ────────────────────────────
 async function fetchCreator(channelName) {
-  const url = `${SUPABASE_URL}/rest/v1/tipped_creators?channel_name=eq.${encodeURIComponent(channelName)}&select=*&limit=1`;
-  const res = await fetch(url, {
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    },
-  });
-  if (!res.ok) throw new Error(`Supabase error: ${res.status}`);
+  const res = await fetch(`${BACKEND_URL}/api/creator/${encodeURIComponent(channelName)}`);
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`);
   const data = await res.json();
-  return data.length > 0 ? data[0] : null;
+  return data.found ? data.creator : null;
 }
 
 // ─── BUTTON INJECTION ─────────────────────────────────────────
@@ -158,7 +147,7 @@ async function injectOrUpdateTipButton(channelName) {
   try {
     creator = await fetchCreator(channelName);
   } catch (e) {
-    console.error("[TipSOL] Supabase fetch failed:", e);
+    console.error("[FlashTip] Creator lookup failed:", e);
   }
 
   if (creator) {
@@ -168,7 +157,7 @@ async function injectOrUpdateTipButton(channelName) {
     btn.onclick = () => openTipModal(creator);
   } else {
     btn.disabled = true;
-    btn.title = "This creator hasn't enrolled in TipSOL yet";
+    btn.title = "This creator hasn't enrolled in FlashTip yet";
     btn.querySelector(".tip-btn-text").textContent = "💸 Tip with SOL";
   }
 }
@@ -251,7 +240,10 @@ function openTipModal(creator) {
   document.getElementById("sol-send-btn").onclick = () => handleSendTip(creator);
 }
 
-// ─── SEND TIP (proxied through MAIN world) ───────────────────
+// ─── SEND TIP ────────────────────────────────────────────────
+// 1. Connect Phantom (via web3-helper in MAIN world)
+// 2. Build transaction (via backend API)
+// 3. Sign & send (via web3-helper → Phantom)
 async function handleSendTip(creator) {
   const sendBtn = document.getElementById("sol-send-btn");
   const sendLabel = document.getElementById("sol-send-label");
@@ -264,28 +256,68 @@ async function handleSendTip(creator) {
     return;
   }
 
-  // First check Phantom is available in MAIN world
   sendBtn.disabled = true;
   sendLabel.textContent = "Checking wallet...";
   setStatus(statusEl, "info", "Detecting Phantom...");
 
   try {
+    // Step 1: Check Phantom is available
     const ping = await pingWithRetry();
     if (!ping.hasPhantom) {
-      throw new Error('Phantom not detected. <a href="https://phantom.app" target="_blank">Install it here</a> and refresh.');
+      throw new Error('Phantom not detected. <a href="https://phantom.app" target="_blank">Install it here</a>.');
     }
 
+    // Step 2: Connect Phantom & get public key
+    sendLabel.textContent = "Connecting wallet...";
+    setStatus(statusEl, "info", "Please approve connection in Phantom...");
+
+    const connectResult = await sendToMainWorld({ type: "SOL_TIP_CONNECT" });
+    const fromAddress = connectResult.publicKey;
+
+    // Step 3: Build transaction on backend
+    sendLabel.textContent = "Building transaction...";
+    setStatus(statusEl, "info", "Preparing transaction...");
+
+    const buildRes = await fetch(`${BACKEND_URL}/api/build-transaction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fromAddress,
+        toAddress: creator.wallet_address,
+        solAmount: amount,
+        memo,
+      }),
+    });
+
+    if (!buildRes.ok) {
+      const err = await buildRes.json();
+      throw new Error(err.error || "Failed to build transaction");
+    }
+
+    const { transaction: base64Tx } = await buildRes.json();
+
+    // Step 4: Sign & send via Phantom (through web3-helper)
     sendLabel.textContent = "Awaiting Phantom approval...";
     setStatus(statusEl, "info", "Please approve in Phantom...");
 
-    // Delegate everything (connect + build tx + sign + send) to MAIN world
     const result = await sendToMainWorld({
-      type: "SOL_TIP_SEND",
-      toAddress: creator.wallet_address,
-      solAmount: amount,
-      memo,
-      network: SOLANA_NETWORK,
+      type: "SOL_TIP_SIGN_AND_SEND",
+      base64Tx,
     });
+
+    // Step 5: Record tip in backend (non-blocking)
+    fetch(`${BACKEND_URL}/api/record-tip`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        signature: result.signature,
+        fromAddress,
+        toAddress: creator.wallet_address,
+        solAmount: amount,
+        memo,
+        channelName: creator.channel_name,
+      }),
+    }).catch(() => { }); // fire-and-forget
 
     setStatus(
       statusEl, "success",

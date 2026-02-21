@@ -10,7 +10,7 @@
   ],
   "host_permissions": [
     "https://www.youtube.com/*",
-    "https://*.supabase.co/*"
+    "http://localhost:3001/*"
   ],
   "content_scripts": [
     {
