@@ -7,6 +7,7 @@ const creatorController = require("../controllers/creatorController");
 const transactionController = require("../controllers/transactionController");
 const dashboardController = require("../controllers/dashboardController");
 const aiController = require("../controllers/aiController");
+const insertVectorController = require("../controllers/insertVectorController");
 const { SOLANA_NETWORK } = require("../config");
 
 // Health check
@@ -31,5 +32,9 @@ router.post("/dashboard/create-indexes", authenticateJWT, dashboardController.cr
 
 // AI
 router.post("/ai/chat", authenticateJWT, aiController.chat);
+router.get("/ai/history", authenticateJWT, aiController.getChatHistory);
+
+// Vector DB
+router.post("/vector/insert", authenticateJWT, insertVectorController.insertVectorData);
 
 module.exports = router;

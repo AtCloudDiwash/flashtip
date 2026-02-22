@@ -92,10 +92,76 @@ const executeSql = async (sql) => {
     return { ok: response.ok, status: response.status };
 };
 
+const ensureChatTable = async () => {
+    const result = await executeSql(`
+        CREATE TABLE IF NOT EXISTS public.chat_messages (
+            id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+            channel_name TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user', 'ai')),
+            content TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_channel 
+            ON public.chat_messages (channel_name, created_at DESC);
+    `);
+    if (!result.ok) {
+        throw new Error(`Failed to create chat_messages table: ${result.status}`);
+    }
+};
+
+let chatTableReady = false;
+
+const saveChatMessage = async (channelName, role, content) => {
+    if (!chatTableReady) {
+        await ensureChatTable();
+        chatTableReady = true;
+    }
+
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/chat_messages`, {
+        method: "POST",
+        headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+        },
+        body: JSON.stringify({ channel_name: channelName, role, content }),
+    });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to save chat message: ${text}`);
+    }
+};
+
+const fetchChatHistory = async (channelName, limit = 20) => {
+    if (!chatTableReady) {
+        await ensureChatTable();
+        chatTableReady = true;
+    }
+
+    const url = `${SUPABASE_URL}/rest/v1/chat_messages?channel_name=eq.${encodeURIComponent(channelName)}&select=role,content,created_at&order=created_at.desc&limit=${limit}`;
+    const response = await fetch(url, {
+        headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to fetch chat history: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.reverse();
+};
+
 module.exports = {
     fetchCreatorByChannelName,
     loginUser,
     recordTip,
     fetchTipsForChannel,
-    executeSql
+    executeSql,
+    saveChatMessage,
+    fetchChatHistory
 };

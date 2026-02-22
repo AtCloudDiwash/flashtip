@@ -4,10 +4,10 @@ const crypto = require("crypto");
 const COLLECTION_NAME = "creator_insights";
 
 /**
- * Initializes the collection in Qdrant if it doesn't already exist.
- * Configured for Gemini text-embedding-004 (768 dimensions).
+ * Ensures the collection exists with correct parameters (768 dims for gemini-embedding-001).
+ * This is called automatically before any insertion.
  */
-const initCollection = async () => {
+const ensureCollection = async () => {
     try {
         const collections = await qdrantClient.getCollections();
         const exists = collections.collections.find(c => c.name === COLLECTION_NAME);
@@ -20,40 +20,28 @@ const initCollection = async () => {
                     distance: "Cosine",
                 },
             });
-            // Index the creator_address for fast filtering
             await qdrantClient.createPayloadIndex(COLLECTION_NAME, {
                 field_name: "creator_address",
                 field_schema: "keyword",
             });
         }
     } catch (err) {
-        console.error("[Qdrant] Init error:", err.message);
+        console.error("[Qdrant] Collection check failed:", err.message);
     }
 };
 
 /**
- * Generates an embedding for the given text using Gemini.
+ * Inserts a new interaction into the Qdrant database.
+ * Generates embeddings on-the-fly using Gemini.
  */
-const getEmbedding = async (text) => {
+const insertActivity = async (creatorAddress, activityText, metadata = {}) => {
     try {
-        const result = await embeddingModel.embedContent(text);
-        return result.embedding.values;
-    } catch (err) {
-        console.error("[Gemini] Embedding error:", err.message);
-        return null;
-    }
-};
+        await ensureCollection();
+        
+        const result = await embeddingModel.embedContent(activityText);
+        const vector = result.embedding.values;
 
-/**
- * Stores a tipper activity in the vector DB.
- * Each entry is appended with a unique ID.
- */
-const storeActivity = async (creatorAddress, activityText, metadata = {}) => {
-    try {
-        await initCollection();
-        const vector = await getEmbedding(activityText);
-        if (!vector) return;
-
+        // Programmatic Insertion
         await qdrantClient.upsert(COLLECTION_NAME, {
             wait: true,
             points: [
@@ -69,8 +57,9 @@ const storeActivity = async (creatorAddress, activityText, metadata = {}) => {
                 },
             ],
         });
+        console.log(`[Qdrant] Successfully inserted activity for: ${creatorAddress}`);
     } catch (err) {
-        console.error("[Qdrant] Store activity error:", err.message);
+        console.error("[Qdrant] Insertion error:", err.message);
     }
 };
 
@@ -79,9 +68,11 @@ const storeActivity = async (creatorAddress, activityText, metadata = {}) => {
  */
 const searchContext = async (creatorAddress, query, limit = 5) => {
     try {
-        await initCollection();
-        const vector = await getEmbedding(query);
-        if (!vector) return [];
+        await ensureCollection();
+        
+        // Generate query embedding
+        const result = await embeddingModel.embedContent(query);
+        const vector = result.embedding.values;
 
         const results = await qdrantClient.search(COLLECTION_NAME, {
             vector,
@@ -105,6 +96,6 @@ const searchContext = async (creatorAddress, query, limit = 5) => {
 };
 
 module.exports = {
-    storeActivity,
-    searchContext,
+    insertActivity,
+    searchContext
 };

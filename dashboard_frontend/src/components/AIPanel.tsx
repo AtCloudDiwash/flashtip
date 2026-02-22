@@ -9,14 +9,14 @@ interface Message {
     content: string;
 }
 
+const WELCOME_MESSAGE: Message = {
+    role: "ai",
+    content: "Hey! I'm your Flash Tip analytics assistant. Ask me anything about your tip data, trends, or audience behavior."
+};
+
 export function AIChat({ isFull = false }: { isFull?: boolean }) {
     const { analyticsData } = useAuth();
-    const [messages, setMessages] = useState<Message[]>([
-        {
-            role: "ai",
-            content: "Hey! I'm your Flash Tip analytics assistant. Ask me anything about your tip data, trends, or audience behavior."
-        }
-    ]);
+    const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -27,6 +27,26 @@ export function AIChat({ isFull = false }: { isFull?: boolean }) {
         "Analyze watch time patterns",
         "Predict next month earnings"
     ];
+
+    useEffect(() => {
+        const loadHistory = async () => {
+            try {
+                const token = localStorage.getItem("flash_tip_token");
+                if (!token) return;
+                const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/ai/history`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                if (!res.ok) return;
+                const { messages: history } = await res.json();
+                if (history && history.length > 0) {
+                    setMessages([WELCOME_MESSAGE, ...history]);
+                }
+            } catch (err) {
+                console.error("Failed to load chat history:", err);
+            }
+        };
+        loadHistory();
+    }, []);
 
     useEffect(() => {
         if (scrollRef.current) {

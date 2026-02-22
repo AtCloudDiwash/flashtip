@@ -1,7 +1,6 @@
 const { buildTransferTransaction } = require("../services/solana");
 const { recordTip } = require("../services/supabase");
-const { storeActivity } = require("../services/qdrant");
-const { fetchVideoStats } = require("../services/youtube");
+const { insertActivity } = require("../services/qdrant");
 const { YT_API_KEY } = require("../config");
 
 const buildTransaction = async (req, res) => {
@@ -63,10 +62,9 @@ const recordTipController = async (req, res) => {
         // Background task: Enrich with YouTube data and store in Qdrant for RAG
         (async () => {
             try {
-                let extraContext = "";
                 let subCount = "unknown";
                 
-                // If we have a channel name, try to get more detailed subscriber data for the tipper/creator interaction context
+                // Try to get tipper/channel stats if possible
                 if (channel_name && YT_API_KEY) {
                     try {
                         const ytUrl = `https://www.googleapis.com/youtube/v3/channels?part=statistics&forHandle=${encodeURIComponent(channel_name)}&key=${YT_API_KEY}`;
@@ -82,22 +80,24 @@ const recordTipController = async (req, res) => {
                     }
                 }
 
-                // Create a semantically optimized interaction string
+                // Create an optimized interaction string for the Vector DB
                 const timestamp = new Date().toLocaleString();
-                const activityText = `Tipper "${tipper_address}" (Subscriber Count: ${subCount}) tipped ${solAmount} SOL on channel "${channel_name}". 
-                    The tip occurred at ${timestamp}. The user spent a maximum of ${duration_spent} seconds watching the video (${video_link}). 
-                    Comment/Memo: "${memo || "No message provided"}".`;
+                const activityText = `Tipper's walllet address"${tipper_address}" (YouTube Subs: ${subCount}) tipped ${solAmount} SOL. 
+                    Occurred at: ${timestamp}. 
+                    Video Link: ${video_link}. 
+                    Time Spent on Video: ${duration_spent} seconds. 
+                    Comment: "${memo || "No message provided"}".`;
 
-                await storeActivity(creator_address, activityText, {
+                await insertActivity(creator_address, activityText, {
                     tipper_address,
                     sol_amount: solAmount,
                     video_link,
                     duration_spent,
-                    channel_name
+                    channel_name,
+                    sub_count: subCount
                 });
-                console.log(`[FlashTip] Activity stored in Qdrant for creator: ${creator_address.slice(0, 8)}...`);
             } catch (error) {
-                console.error("[FlashTip] Qdrant storage failed:", error.message);
+                console.error("[FlashTip] Qdrant insertion background task failed:", error.message);
             }
         })();
 
